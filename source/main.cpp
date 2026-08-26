@@ -1,79 +1,142 @@
-#include <config.hpp>
+#include <animal.hpp>
 #include <data.hpp>
-#include <organism.hpp>
 #include <plant.hpp>
-#include <random.hpp>
-#include <transform.hpp>
+
+#include <raylib.h>
 
 #include <filesystem>
-#include <iostream>
-
-// TODO: make food a resource dependent on the environment's soil nutrient content
 
 int main() {
-    if (std::filesystem::exists("csv") && std::filesystem::is_directory("csv")) {
-        std::filesystem::remove_all("csv");
+    if (std::filesystem::exists("plants") && std::filesystem::is_directory("plants")) {
+        std::filesystem::remove_all("plants");
     }
 
-    std::filesystem::create_directory("csv");
-    std::filesystem::create_directory("csv/phases");
+    std::filesystem::create_directory("plants");
+    std::filesystem::create_directory("plants/phases");
+
+    if (std::filesystem::exists("animals") && std::filesystem::is_directory("animals")) {
+        std::filesystem::remove_all("animals");
+    }
+
+    std::filesystem::create_directory("animals");
+    std::filesystem::create_directory("animals/phases");
+
+    InitWindow(1000, 1000, "ecosim");
+    SetTargetFPS(10000);
 
     RandomEngine engine;
     entt::registry registry;
 
-    for (size_t i = 0; i < config::PlantCount; ++i) {
-        plant::spawn(engine, registry);
+    for (size_t i = 0; i < 50; ++i) {
+        PlantGenome plantGenome = {
+            .size = 10.0 * engine.uniformSample(0.9, 1.1),
+            .synthesizingArea = 0.1 * engine.uniformSample(0.9, 1.1),
+            .offspringCount = 1.0 * engine.uniformSample(0.9, 1.1),
+            .offspringQuality = 0.8 * engine.uniformSample(0.9, 1.1),
+        };
+
+        glm::dvec2 position = {
+            engine.uniformSample(-1.0, 1.0) * config::WorldSize,
+            engine.uniformSample(-1.0, 1.0) * config::WorldSize,
+        };
+
+        plant::spawn({position}, plantGenome, engine, registry);
     }
 
-    for (size_t i = 0; i < config::OrganismInitialCount; ++i) {
-        organism::spawn(engine, registry);
+    for (size_t i = 0; i < 30; ++i) {
+        AnimalGenome animalGenome = {
+            .speed = 3.0 * engine.uniformSample(0.9, 1.1),
+            .senseRadius = 20.0 * engine.uniformSample(0.9, 1.1),
+            .size = 8.0 * engine.uniformSample(0.9, 1.1),
+            .offspringCount = 1.0 * engine.uniformSample(0.9, 1.1),
+            .offspringQuality = 0.75 * engine.uniformSample(0.9, 1.1),
+        };
+
+        glm::dvec2 position = {
+            engine.uniformSample(-1.0, 1.0) * config::WorldSize,
+            engine.uniformSample(-1.0, 1.0) * config::WorldSize,
+        };
+
+        animal::spawn({position}, animalGenome, engine, registry);
     }
 
-    using Clock = std::chrono::steady_clock;
-
-    Clock::time_point lastTime = Clock::now();
-
-    double timer = 0.0;
     size_t phase = 0;
 
-    while (true) {
-        Clock::time_point currentTime = Clock::now();
-        std::chrono::duration<double> elapsed = currentTime - lastTime;
-        double deltaTime = elapsed.count();
+    Environment environment = {
+        .time = 0.0,
+    };
 
-        lastTime = currentTime;
+    while (!WindowShouldClose()) {
+        double deltaTime = 0.01;
 
-        organism::systems::wander(engine, registry, deltaTime);
-        organism::systems::metabolize(registry, deltaTime);
-        organism::systems::purge(registry);
-        organism::systems::reproduce(engine, registry, deltaTime);
+        plant::systems::photosynthesize(engine, registry, deltaTime);
+        plant::systems::replicate(engine, registry, environment, deltaTime);
+
+        animal::systems::replicate(engine, registry, deltaTime);
+        animal::systems::move(engine, registry, deltaTime);
+        animal::systems::metabolize(engine, registry, deltaTime);
 
         transform::systems::integrate(registry, deltaTime);
 
-        timer += deltaTime;
+        environment.time += deltaTime;
 
-        while (timer >= config::PhaseDuration) {
-            std::cout << "================ phase completed\n";
+        if (environment.time >= config::PhaseDuration) {
+            environment.time = 0.0;
 
-            timer -= config::PhaseDuration;
+            auto plantRecord = data::generatePlantRecord(registry);
+            auto animalRecord = data::generateAnimalRecord(registry);
 
-            data::Census census = data::performCensus(registry);
-            data::PhaseRecord record = data::generateRecord(registry);
+            std::string currentPlantStateTitle = "plants/phases/phase" + std::to_string(phase) + ".csv";
+            std::string currentAnimalStateTitle = "animals/phases/phase" + std::to_string(phase) + ".csv";
+            std::string currentPlantRecordTitle = "plants/mean.csv";
+            std::string currentAnimalRecordTitle = "animals/mean.csv";
 
-            std::string currentStateTitle = "csv/phases/phase" + std::to_string(phase) + ".csv";
-            std::string currentRecordTitle = "csv/mean.csv";
+            data::publishCurrentPlantStates(registry, currentPlantStateTitle.c_str());
+            data::publishCurrentAnimalStates(registry, currentAnimalStateTitle.c_str());
 
-            data::publishCurrentState(registry, currentStateTitle.c_str());
-            data::publishRecord(record, currentRecordTitle.c_str());
+            data::appendPlantRecord(plantRecord, currentPlantRecordTitle.c_str(), phase);
+            data::appendAnimalRecord(animalRecord, currentAnimalRecordTitle.c_str(), phase);
 
-            if (census.organismCount == 0) {
-                return 0;
-            }
-
-            lastTime = Clock::now();
             ++phase;
         }
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+        float factor = 1000.0 / config::WorldSize;
+
+        auto plantView = registry.view<PlantGenome, Position, Metabolism>();
+        auto animalView = registry.view<AnimalGenome, Position, Metabolism>();
+
+        for (auto [plant, genome, position, metabolism] : plantView.each()) {
+            Vector2 centre = {
+                .x = ((static_cast<float>(factor * position.position.x) + 1000.0f) / 2.0f),
+                .y = ((static_cast<float>(factor * position.position.y) + 1000.0f) / 2.0f),
+            };
+
+            double maturity = std::clamp(metabolism.age / config::JuvenileMaturityAge, 0.0, 1.0);
+            double fullPercent = metabolism.energy / genome.energyLimit(maturity);
+
+            DrawCircleV(centre, genome.size * (factor / 2.0) * 0.1 * fullPercent, GREEN);
+        }
+
+        for (auto [animal, genome, position, metabolism] : animalView.each()) {
+            Vector2 centre = {
+                .x = ((static_cast<float>(factor * position.position.x) + 1000.0f) / 2.0f),
+                .y = ((static_cast<float>(factor * position.position.y) + 1000.0f) / 2.0f),
+            };
+
+            double maturity = std::clamp(metabolism.age / config::JuvenileMaturityAge, 0.0, 1.0);
+            double fullPercent = metabolism.energy / genome.energyLimit(maturity);
+
+            DrawCircleV(centre, genome.size * (factor / 2.0) * 0.1 * fullPercent, RED);
+            DrawCircleV(centre, genome.senseRadius * (factor / 2.0), Fade(BLUE, 0.1));
+        }
+
+        EndDrawing();
     }
+
+    CloseWindow();
 
     return 0;
 }

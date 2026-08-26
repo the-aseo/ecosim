@@ -3,29 +3,33 @@
 #include <entt/entt.hpp>
 
 namespace data {
-    struct PhaseRecord {
+    struct PlantPhaseRecord {
         size_t count;
-        double speed;
-        double senseRadius;
         double size;
+        double synthesizingArea;
+        double offspringCount;
+        double offspringQuality;
         double energy;
         double maxEnergy;
     };
 
-    struct Census {
-        size_t organismCount;
-        size_t plantCount;
+    struct AnimalPhaseRecord {
+        size_t count;
+        double speed;
+        double senseRadius;
+        double size;
+        double offspringCount;
+        double offspringQuality;
+        double energy;
+        double maxEnergy;
     };
 
-    // collects population counts for food and organisms
-    [[nodiscard]] Census performCensus(entt::registry& registry);
+    [[nodiscard]] PlantPhaseRecord generatePlantRecord(entt::registry& registry);
+    [[nodiscard]] AnimalPhaseRecord generateAnimalRecord(entt::registry& registry);
 
-    // generate a new phase record
-    [[nodiscard]] PhaseRecord generateRecord(entt::registry& registry);
+    void publishCurrentPlantStates(entt::registry& registry, const char* title);
+    void publishCurrentAnimalStates(entt::registry& registry, const char* title);
 
-    // publishes the current state to a csv file
-    void publishCurrentState(entt::registry& registry, const char* title);
-
-    // publishes phase record to a csv file
-    void publishRecord(const PhaseRecord& record, const char* title);
+    void appendPlantRecord(const PlantPhaseRecord& record, const char* title, uint32_t iteration);
+    void appendAnimalRecord(const AnimalPhaseRecord& record, const char* title, uint32_t iteration);
 }
